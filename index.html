@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Climate Insight Explorer</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    .rainbow-border {
+      border-width: 4px;
+      border-style: solid;
+      border-image: linear-gradient(45deg, red, orange, yellow, green, blue, indigo, violet) 1;
+    }
+  </style>
+</head>
+<body class="bg-black text-white min-h-screen font-sans">
+  <div class="rainbow-border m-4 p-6 rounded-lg">
+    <h1 class="text-4xl font-bold text-center mb-6">🌍 Global Climate Insight Explorer</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="p-4 bg-gray-900 rounded">
+        <h2 class="text-2xl mb-2">Search Similar Climate Trends</h2>
+        <input id="query" type="text" placeholder="e.g., California drought 2015" class="w-full p-2 bg-black border border-white text-white rounded">
+        <button onclick="askAI()" class="mt-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded hover:opacity-80">Ask AI 🔍</button>
+        <div id="result" class="mt-4 text-green-400 whitespace-pre-wrap"></div>
+      </div>
+
+      <div class="p-4 bg-gray-900 rounded">
+        <h2 class="text-2xl mb-2">Explore by Map</h2>
+        <div class="text-center mb-2">
+          <button onclick="toggleView()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">🔁 Toggle View</button>
+        </div>
+        <div id="map" class="h-64 w-full rounded"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBFpzPw_lijrB0r6-XG2bdFIMXvRlnPgcE&libraries=visualization"></script>
+  <script>
+    let map, heatmap, circles = [], markers = [];
+    let currentView = "heatmap"; // Default view
+
+    function getColor(anomaly) {
+      if (anomaly >= 2) return "#FF0000";
+      if (anomaly >= 1) return "#FFA500";
+      if (anomaly >= 0.5) return "#FFFF00";
+      return "#00FF00";
+    }
+
+    function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: 20.5937, lng: 78.9629 },
+    zoom: 2,
+    styles: [
+      { featureType: "all", elementType: "geometry", stylers: [{ color: "#1a1a1a" }] },
+      { featureType: "all", elementType: "labels.text.fill", stylers: [{ color: "#ffffff" }] }
+    ]
+  });
+
+  loadClimateData();
+}
+
+function loadClimateData() {
+  fetch("/climate-data")
+    .then(res => {
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      return res.json();
+    })
+    .then(data => {
+      const heatmapData = [];
+
+      data.forEach(entry => {
+        if (entry.latitude && entry.longitude && entry.annual_avg) {
+          const latlng = new google.maps.LatLng(entry.latitude, entry.longitude);
+          const anomaly = entry.annual_avg;
+
+          // Heatmap point
+          heatmapData.push({ location: latlng, weight: anomaly });
+
+          // Circle
+          const color = getColor(anomaly);
+          const circle = new google.maps.Circle({
+            strokeColor: color,
+            strokeOpacity: 0.8,
+            strokeWeight: 1,
+            fillColor: color,
+            fillOpacity: 0.4,
+            center: latlng,
+            radius: 40000 + anomaly * 100000
+          });
+
+          // Marker + Info
+          const marker = new google.maps.Marker({
+            position: latlng,
+            title: `${entry.region} (${entry.year})`
+          });
+
+          const infoWindow = new google.maps.InfoWindow({
+            content: `
+              <strong>${entry.region} (${entry.year})</strong><br>
+              🌡️ Anomaly: ${anomaly.toFixed(2)}°C<br>
+              ${entry.summary || "No summary"}
+            `
+          });
+
+          marker.addListener("click", () => infoWindow.open(map, marker));
+
+          circles.push(circle);
+          markers.push(marker);
+        } else {
+          console.warn("Missing data for entry:", entry);
+        }
+      });
+
+      heatmap = new google.maps.visualization.HeatmapLayer({
+        data: heatmapData,
+        radius: 40,
+        opacity: 0.7,
+        map: map
+      });
+
+      // Hide circles/markers initially
+      circles.forEach(c => c.setMap(null));
+      markers.forEach(m => m.setMap(null));
+    })
+    .catch(error => {
+      console.error("Error loading climate data:", error);
+    });
+}
+
+function toggleView() {
+  if (currentView === "heatmap") {
+    heatmap.setMap(null);
+    circles.forEach(c => c.setMap(map));
+    markers.forEach(m => m.setMap(map));
+    currentView = "circles";
+  } else {
+    circles.forEach(c => c.setMap(null));
+    markers.forEach(m => m.setMap(null));
+    heatmap.setMap(map);
+    currentView = "heatmap";
+  }
+}
+
+async function askAI() {
+  const query = document.getElementById("query").value;
+  document.getElementById("result").innerText = "Loading...";
+  try {
+    const response = await fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query })
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    document.getElementById("result").innerText = data.answer || "No answer returned.";
+  } catch (e) {
+    document.getElementById("result").innerText = "⚠️ Failed to contact AI backend.";
+    console.error(e);
+  }
+}
+
+window.onload = initMap;
+
+  </script>
+</body>
+</html>
